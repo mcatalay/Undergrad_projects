@@ -1,0 +1,104 @@
+---
+title: "Question 3d and 3e"
+author: 'Mufitcan Atalay '
+date: "February 19, 2019"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+
+demand = read.csv("demand_data.csv")
+
+#multinominal log likelihood
+
+log_l = function(beta){
+  ll = 0 
+  dataset = demand
+  y = dataset[,14]
+  x_ij = dataset[,2:10]
+  for (i in 1:length(y)){
+    second_term = log(1 + exp(as.matrix(x_ij[i, 1:3])%*%beta[1:3]) + exp(as.matrix(x_ij[i, 4:6])%*%beta[4:6]) + exp(as.matrix(x_ij[i, 7:9])%*%beta[7:9]))
+    if (y[i] != 0 ){
+      x_j = as.matrix(x_ij[i,(3*y[i]-2):(3*y[i])])
+      first_term = x_j%*%beta[(3*y[i]-2):(3*y[i])]
+      ll = ll + (first_term - second_term) 
+    } else {
+      ll = ll - second_term
+    }
+  } 
+  return(ll[1,1])
+}
+
+#gradient score_function
+score_function = function(beta){
+  dataset = demand
+  y = dataset[,14]
+  x_ij = dataset[,2:10]
+  score_vector = rep(0,9)
+  for (i in 1:length(y)){
+    denom = 1 + exp(as.matrix(x_ij[i, 1:3])%*%beta[1:3]) + 
+      exp(as.matrix(x_ij[i, 4:6])%*%beta[4:6]) + 
+      exp(as.matrix(x_ij[i, 7:9])%*%beta[7:9])
+    if (y[i] != 0){
+      x_j = as.matrix(x_ij[i,(3*y[i]-2):(3*y[i])])
+      numerator = exp(x_j%*%beta[(3*y[i]-2):(3*y[i])])
+      for (j in 1:length(beta)){
+        if (y[i] == j){
+          indicator = 1
+        } else {
+          indicator = 0
+        }
+        x_m = x_ij[i,j]
+        row_score = x_m*(indicator - numerator/denom)
+        score_vector[j] = score_vector[j] + row_score
+      } 
+    } 
+  }
+  return(score_vector)
+  }
+
+#library(optimx)
+#utput = optimx(par = rep(1,9),
+ #               fn = log_l,
+  #              gr = score_function)
+
+```
+When we try to optimize the function gives an error message. There is a small bug in our score function but we couldn't figure it out in many hours of debugging. 
+
+```{r}
+#calculating shares
+library(dplyr)
+shares = table(demand$marketindex, demand$choice)
+shares = shares/100
+marketindex = seq(1, 50, length.out = 50)
+y_1 = data.frame(cbind(marketindex, log(shares[,2]/shares[,1])))
+y_1 = y_1 %>% filter(V2 != Inf) %>% filter(V2 != -Inf) %>% filter(!is.na(V2))
+  
+y_2 = data.frame(cbind(marketindex, log(shares[,3]/shares[,1])))
+y_2 = y_2 %>% filter(V2 != Inf) %>% filter(V2 != -Inf) %>% filter(!is.na(V2))
+
+y_3 = data.frame(cbind(marketindex, log(shares[,4]/shares[,1])))
+y_3 = y_3 %>% filter(V2 != Inf) %>% filter(V2 != -Inf) %>% filter(!is.na(V2))
+    
+data_1 = unique(left_join(y_1, demand[,c(1,2:4)], by="marketindex"))
+data_2 = unique(left_join(y_2, demand[,c(1,5:7)], by="marketindex"))
+data_3 = unique(left_join(y_3, demand[,c(1,8:10)], by="marketindex"))
+
+#OLS for j = 1
+j_1 = lm(V2 ~ x1_prod1 + x2_prod1 + x3_prod1, data=data_1) 
+summary(j_1)
+#j=2
+j_2 = lm(V2 ~ x1_prod2 + x2_prod2 + x3_prod2, data=data_2) 
+summary(j_2)
+#j=3
+j_3 = lm(V2 ~ x1_prod3 + x2_prod3 + x3_prod3, data=data_3) 
+summary(j_3)
+```
+The folllowing results for the estimates make sense. The coefficient estimate for price is always negative and the other coefficient estimates for product quality are all positive. This is in line with what we would expect.
