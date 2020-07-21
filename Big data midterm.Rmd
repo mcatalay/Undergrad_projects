@@ -1,0 +1,373 @@
+---
+title: "Big Data Midterm"
+author: "Mufitcan Atalay"
+date: "5/5/2018"
+output:
+  pdf_document: default
+  html_document: default
+---
+```{r, echo = False}
+setwd("/Users/mufitcan/Desktop")
+library(knitr)
+# Read the DJIA data
+dj<-read.csv("DJIA.csv")
+head(dj) # Open price, highest, lowest and close price
+ndays<-nrow(dj) # 1989 days
+
+# Read the words
+words<-read.csv("WordsFinal.csv",header=F)
+words<-words[,1]
+
+# Read the word-day pairings
+doc_word<-read.table("WordFreqFinal.csv",header=F)
+
+# Create a sparse matrix
+library(gamlr)
+spm<-sparseMatrix(
+		i=doc_word[,1],
+		j=doc_word[,2],
+		x=doc_word[,3],
+		dimnames=list(id=1:ndays,words=words))
+
+# We select only words at occur at least 5 times
+cols<-apply(spm,2,sum)
+index<-apply(spm,2,sum)>5
+spm<-spm[,index]
+
+# and words that do not occur every day
+index<-apply(spm,2,sum)<ndays
+spm<-spm[,index]
+dim(spm) # we end up with 3183 words
+
+#  *** FDR *** analysis
+spm<-spm[-ndays,]
+time<-dj[-ndays,1]
+
+# Take returns 
+par(mfrow=c(1,2))
+R<-(dj[-ndays,7]-dj[-1,7])/dj[-1,7]
+
+# Take the log of the maximal spread
+V<-log(dj[-ndays,3]-dj[-ndays,4])
+
+# FDR: we want to pick a few words that correlate with the outcomes (returns and volatility)
+# create a dense matrix of word presence
+P <- as.data.frame(as.matrix(spm>0))
+```
+
+##1
+#1.1
+We use starter code to find p-values
+```{r}
+library(parallel)
+
+margreg <- function(x){
+	fit <- lm(Outcome~x)
+	sf <- summary(fit)
+	return(sf$coef[2,4]) 
+}
+
+cl <- makeCluster(detectCores())
+
+# pull out stars and export to cores
+
+# **** Analysis for Returns ****
+
+Outcome<-R
+
+clusterExport(cl,"Outcome") 
+
+# run the regressions in parallel
+
+mrgpvals <- unlist(parLapply(cl,P,margreg))
+hist(mrgpvals, xlab="p-values", main = "Histogram of p-values for Price")
+boxplot(mrgpvals, horizontal = TRUE, xlab="p-values", main = "Histogram of p-values for Price")
+```
+
+Looking at the histogram and the boxplots of the p-values for price, we can see that the distribution is somewhat uniform, however it does look like it is skewed to the right with the histogram. The boxplot however makes the distribution look pretty uniform.  This is because p-values form a uniform distribution when the null hypothesis of no signal is true, so it seems like there isn't enough signal to predict price. Maybe the slight skew to the right could provide some signal, but this skew is very small, so this is also unlikely.
+
+
+```{r}
+# **** Repeat for volatility
+
+Outcome<-V
+
+clusterExport(cl,"Outcome") 
+
+# run the regressions in parallel
+
+mrgpvals1 <- unlist(parLapply(cl,P,margreg))
+hist(mrgpvals1, xlab="p-values", main = "Histogram of p-values for Volatility")
+boxplot(mrgpvals1, horizontal = TRUE, xlab="p-values", main = "Histogram of p-values for Volatility")
+```
+
+Looking at the histogram and the boxplots of the p-values for price, we can see that the distribution is somewhat uniform, just like with price, however it is a little skewed to the left, more so than price was to the right. This could mean that there some more variables that could be used as a signal, however still the rough uniform distribution means that we should expect that the null hypothesis of no signal should mostly hold true. 
+
+It seems like there would be close to no words to act as signals for price and maybe a few words to act as a signal towards volatility. 
+
+#1.2
+```{r, echo= FALSE}
+fdr_cut <- function(pvals, q, plotit=FALSE, ...){
+  pvals <- pvals[!is.na(pvals)]
+  N <- length(pvals)
+  
+  k <- rank(pvals, ties.method="min")
+  alpha <- max(pvals[ pvals<= (q*k/N) ])
+  
+  if(plotit){
+    sig <- factor(pvals<=alpha)
+    o <- order(pvals)
+    plot(pvals[o], col=c("grey60","red")[sig[o]], pch=20, ..., 
+       ylab="p-values", xlab="tests ordered by p-value", main = paste('FDR =',q))
+    lines(1:N, q*(1:N)/N)
+  }
+  
+  return(alpha)
+}
+```
+
+First we calculate the $\alpha$ value associated with a $10\%$ False Discovery Rate for prices
+```{r}
+q<-0.1
+alpha <-fdr_cut(mrgpvals, q=q)
+alpha
+```
+We can see that the cut-off $\alpha$ value is quite small, which means that we will probably not have many p-values that make the cut.
+
+Now we can look at the number of p-values from price that are below this $\alpha$ value 
+```{r}
+sum(mrgpvals<=alpha) # For price
+```
+We can see that there is only one word with a p-value below the cut-off that can be used for predicting price. This is quite low. 
+
+Now again,  we calculate the $\alpha$ value associated with a $10\%$ False Discovery Rate for volatility
+```{r}
+q<-0.1
+alpha1 <-fdr_cut(mrgpvals1, q=q)
+alpha1
+```
+
+Now we can look at the number of p-values from volatility that are below this $\alpha$ value 
+```{r}
+sum(mrgpvals1<=alpha1) # For price
+```
+It seems like 12 words are significant for prediction of volatility, which is much better than price, although it is still quite low considering how many words there were in the first place. 
+
+False discovery rate main adavantage is its ability to identify significant words that could act as signals. In this way we are able to reduct an incredibly large amount of data, i.e. words that are used in headlines, to a very small subset and make predictions based on that subset. In this sense it is quite useful. The traditional main disadvtange with FDR, regardless of whether you are working with words or not, is that by nature some of the words identified through FDR will be falsely identified. The main issue with using FDR for word selection is that FDR assumes randomness, and you could make a serious argument that words are not used randomly in headlines. This way FDR could lead us to more false positives than we expect. 
+
+
+#1.3
+```{r}
+sort(mrgpvals1)[1:20] # 20 smallest p-values for volatility
+```
+The largest $\alpha$ value among the 20 smallest p-values is $0.0011068703$. We need to find the false discovery rate associated with this $\alpha$ value, to calculate the expected number of false discoveries. 
+```{r}
+q1<-0.171
+alpha2 <-fdr_cut(mrgpvals1, q=q1)
+alpha2
+```
+This number is roughly $17.1\%$. This means that we expect $17.1\%$ of our $20$ p-values to be false
+```{r}
+q1*20
+```
+So we expect somewhere between 3 to 4 false discoveries. 
+
+The p-values of are indepedent because we run parallel regressions for the words rather than running a regression featuring all of the words. If we had done that, then the inclusion of one word or the exclusion of one word would affect each p-value and woulde therefore not be independent. Since this is not the case and we run a regression of each word onto price or volatility the p-value associated with the coefficient for one word  is independent of the p-value associated with the coefficient with another word.
+
+##2
+#2.1
+We use the starter code to run a lasso on the words to predict the returns
+```{r}
+lasso1<- gamlr(spm, y=R, lambda.min.ratio=1e-3)
+plot(lasso1) # plot of LASSO coefficient selection headline words to predict returns
+```
+Here we can see a plot of the lasso variable selection. Even from the graph we can see that not many of the words have survived the LASSOs criteria. 
+
+Now, to find a combination of words that could predict returns
+```{r}
+coefs <- coef(lasso1)
+words1 <- coefs[2:3184]
+signifwords <- words1 != 0
+sum(signifwords)
+```
+We can see that a combination of 47 words are significant enough to be used to predict returns.
+```{r}
+b <- as.matrix(coefs)
+c <- b[which(b[,1]!=0),]
+c[2:48]
+```
+So the following words can be used to predict returns. 
+
+Lets say we picked the lambda which minimized AICc. To do this we need to calculate null deviance and the deviance of our selected model. 
+```{r}
+dev <- lasso1$deviance[which.min(AICc(lasso1))]
+dev0<- lasso1$deviance[1]
+rsquared = 1-dev/dev0
+rsquared
+```
+The $R^2$ value is actually very small. This means that our model using words from headlines to predict prices is not very accurate. Our model assumes a linear relationship between headlines and prices, and in this case we can say that headlines do a very bad job of predicting prices. However, it may be that there is an quadratic, exponential or logarithmic etc. relationship between prices and headlines, in which case headlines may be able to predict prices. With the current linear model, headlines are unable to predict prices. 
+
+#2.2
+First we run a model predicting volatility using headline words
+```{r}
+lasso2<- gamlr(spm, y=V, lambda.min.ratio=1e-3)
+plot(lasso2) # plot of LASSO coefficient selection headline words to predict volatility
+```
+
+Then we find the number of words which are significant enough tobe used to predict volatility according to LASSO
+```{r}
+coefs1 <- coef(lasso2)
+words2 <- coefs1[2:3184]
+signifwords1 <- words2 != 0
+sum(signifwords1)
+```
+We can see that a combination of 134 words are significant enough to be used to predict volatility.
+```{r}
+b1 <- as.matrix(coefs1)
+c2 <- b1[which(b1[,1]!=0),]
+c2[2:134]
+```
+So the following words can be used to predict volatility. 
+
+Lets say we picked the lambda which minimized AICc. To do this we need to calculate null deviance and the deviance of our selected model. 
+```{r}
+dev1 <- lasso2$deviance[which.min(AICc(lasso2))]
+dev01<- lasso2$deviance[1]
+rsquared1 = 1-dev1/dev01
+rsquared1
+```
+
+The $R^2$ value is still pretty smalle although it is larger than the  $R^2$ value for words to price. This means that our model using words from headlines to predict volatility is not very accurate. Our model assumes a linear relationship between headlines and prices, and in this case we can say that headlines do a very bad job of predicting prices. However, it may be that there is an quadratic, exponential or logarithmic etc. relationship between prices and volatility, in which case headlines may be able to predict volatility With the current linear model, headlines are unable to predict volatility. 
+
+Now we run a model predicting volatility using headline words and the previous days volatility. We can use the starter code to create the model. 
+```{r}
+Previous<-log(dj[-1,3]-dj[-1,4]) # remove the last return
+spm2<-cbind(Previous,spm) # add the previous return to the model matrix
+colnames(spm2)[1]<-"previous" # the first column is the previous volatility
+lasso3<- gamlr(spm2, y=V, lambda.min.ratio=1e-3)
+plot(lasso3) # plot of LASSO coefficient selection headline words and previous day volatility
+```
+We can see that not many coefficients survive the LASSO process from the plot of coefficients
+
+Lets say we picked the lambda which minimized AICc. To do this we need to calculate null deviance and the deviance of our selected model. 
+```{r}
+dev3 <- lasso3$deviance[which.min(AICc(lasso3))]
+dev03<- lasso3$deviance[1]
+rsquared1 = 1-dev3/dev03
+rsquared1
+```
+The in-sample $R^2$ is $0.331585$, which is much larger, nearly twice the $R^2$ of just using headlines to predict volatility and nearly five times the $R^2$ using headlines to predict prices. 
+
+To find 10 most impactful coefficients we need to look at the results of our LASSO model.
+```{r}
+coefs3 <- coef(lasso3)
+words3 <- coefs3[2:3185]
+signifwords3 <- words3 != 0
+sum(signifwords3)
+```
+We can see that a combination of 98 coefficients are significant enough to be used to predict volatility.
+
+```{r}
+b3 <- as.matrix(coefs3)
+c3 <- abs(b3[2:3185,])
+tail(sort(c3), 10)
+```
+
+The following coefficients 9 words and previous day volatility were the 10 strongest coefficients when predicting current volatility. 
+
+Now we find the effect of the word terrorist we must find its coefficient
+```{r}
+b3[which(b3[,1] > 0.017),]
+```
+Looking at the list of coefficients above we can see that the coefficient for "terrorist" is $0.01783894$. This means that including the word terrorist in a headline increases volatility by $0.01783894$. This is because the coefficient for "terrorist" is for a dummy variable for the inclusion of the word "terrorist". 
+We can also see that the coefficient for the previous day volatility $V_{t-1}$ is $0.45809444$. This means that if the volatility from the previous day was $1$, then it would lead to $0.45809444$ volatility today. Unlike the coefficeint for "terrorist" it is not a coefficient for a dummy variable, but instead a coefficent for the amount of volatility from the previous day. 
+
+#2.3
+We use starter code to obtain $\lambda$.
+```{r}
+# Bootstrap to obtain s.e. of 1.s.e. chosen lambda
+# We apply bootstrap to approximate
+# the sampling distribution of lambda 
+# selected by AICc
+# export the data to the clusters 
+Outcome<-V
+clusterExport(cl,"spm2")
+clusterExport(cl,"V")
+# run 100 bootstrap resample fits
+boot_function <- function(ib){
+
+	require(gamlr)
+
+	fit <- gamlr(spm2[ib,],y=V[ib], lambda.min.ratio=1e-3)
+
+	fit$lambda[which.min(AICc(fit))]
+}
+
+boots <- 100
+n <- nrow(spm2)
+resamp <- as.data.frame(
+			matrix(sample(1:n,boots*n,replace=TRUE),
+			ncol=boots))
+
+lambda_samp <- unlist(parLapply(cl,resamp,boot_function)) #this gives us a 100 samples of lambdas
+```
+
+Now we will calculate the standard error of the 100 $\lambda$s.
+```{r}
+stderr<-sd(lambda_samp)/sqrt(length(lambda_samp))
+stderr
+```
+
+Now we will calculate the $95$ confidence interval for our $\lambda$s.
+```{r}
+c(mean(lambda_samp)-1.96*stderr,mean(lambda_samp)+1.96*stderr)
+```
+
+##3
+#3.1
+First we regress $V_{t-1}$ onto $V_t$ to look for potential correlation
+```{r}
+simplereg <- glm(V ~ Previous)
+summary(simplereg )
+```
+We can calculate the $R^2$ using null and residual deviance which we can then use to calculate correlation.  $$R^2 = 1 - \frac{\text{residual deviance}}{\text{null deviance}} = 1 - \frac{449.38}{609.23} = 0.26238$$
+This means that that correlation is $\sqrt{0.26238} = 0.512231 \approx 0.512$. So we can say that the correlation between $V_{t-1}$ and $V_t$ is close to $0.512$. This is not a particularly large correlation, so it is likely to be a suitable instrumental variable to be used for $V_t$
+
+It also seems like $V_{t-1}$ coefficient is statistically significant even at $\alpha = 0$, so it seems like $V_{t-1}$ has an effect $V_t$. So this is worth exploring. 
+
+Now lets predict d = $V_{t-1}$ from headline words. 
+```{r}
+d <- Previous
+x <-spm #headline words
+treat <- gamlr(x, d, lambda.min.ratio = 1e-4 )
+dhat <- predict(treat, x, type="response")
+plot(dhat, d , main = "dhat vs d")
+```
+We can see from the graph above that while there seems to be some relationship between $\hat{d}$ and d, it is not a particularly strong one. It seems like $\hat{d}$ manages to capture some of positive linear aspect of d, however it seems to be overestimating d at the lower end and then underestimating d at the upper end. Also there is a clear concentration of predictions in the middle, which is not a good sign of $\hat{d}$ ability to describe d. In fact because of this, we could say that $\hat{d}$ does not do a very good job of predicting d. To confirm we can look at the $R^2$.
+```{r}
+r_2 <- cor(drop(dhat),d)^2
+r_2
+```
+The $R^2 = 0.3648263$, which is not very high, which means that our above analysis of the plot of $\hat{d}$ and d was correct. Since we are trying to describe d as $d = \beta \times \hat{d} +v$ and we know that $\hat{d}$ doesn't do a very good job of estmating d, we can say that $v$ is quite large and that our treamtment effect is likely to be significant. Since our confounder variables also seem to be not good predictors of our treatment variable, we can say that most of our confounder variables are not particularly significant. 
+
+This also means that there is information in d independent of x, our headlines, since we cannot estimate it accurately using headlines. 
+
+#3.2
+Now we run a causal LASSO where $\hat{d}$ is unpunished and isolate effect of $V_{t-1}$.
+```{r}
+causal <- gamlr(cBind(d,dhat,x), V, free=2,lmr=1e-4)
+coef(causal)["d",] 
+```
+So the coefficient for $V_{t-1}$ from our causal lasso is $0.3602978$, which is the the treatment effect. This should be somewhat significant based on our analysis in 3.1 and is clearly pretty significant given our vale. 
+
+Now we can run a naive lasso and look at the effect of  $V_{t-1}$
+```{r}
+naive <- gamlr(cBind(d,x), V,lmr=1e-4)
+coef(naive)["d",]
+```
+The coefficient for $V_{t-1}$ from our naive lasso is $0.4574224$, which is larger than our $V_{t-1}$ from the causal lasso. It makes sense that this coefficient is larger because by including $\hat{d}$ and leaving it unpunished in the causal lasso, we are taking into account the confounder effects on d. Since we don't do this in the naive lasso, the coefficient for $V_{t-1}$ should be larger since it should also contain the confounder effects. Clearly the naive lasso overestimates the treatment effect. 
+However, since the $R^2$ of $\hat{d}$ and d we calculated in 3.1 is somewhat low, we know that the confounder effects are also somewhat low and that is why the naive lasso gives us a coefficient that is relatively close to the value from the causal value. It is still roughly $25\%$ larger than our causal lasso coefficient, and this $25\%$ can be attributed to the confounder effects, like how our $\hat{d}$ was able to capture some of the positive linearity of d. 
+
+#3.2
+Since the coefficient for coefficient for $V_{t-1}$ from our causal lasso is $0.3602978 \neq 0$ we can safely say that it is causal, since when we take into account confounders and other such factors this coefficient is still quite large. Also our graph  from 3.1 of $\hat{d}$ and d, showed that there was some information in d independent of x, which we took as our confounding variables. This meant that when we did find a coefficient for $V_{t-1}$ from our causal lasso it was going to be significant. 
+If we wanted to statisitcally confirm this result we could construct a confidence interval for the coefficient of $V_{t-1}$ from our causal lasso and make sure that $0$ is outside the confidence interval.
