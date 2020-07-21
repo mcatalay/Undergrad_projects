@@ -1,0 +1,73 @@
+---
+title: "Big Data Final Project"
+author: "Mufitcan Atalay"
+date: "5/26/2018"
+output: html_document
+---
+```{r}
+library(tree)
+library(randomForest)
+```
+
+#Random Forest
+```{r}
+setwd("/Users/mufitcan/Desktop")
+datarf = read.csv("clean_combined.csv")
+datarf1 = read.csv("datawithrates.csv")
+```
+
+```{r}
+mytree = tree(lawtotal ~ INCTOT + above_bach + african_american + bach_degree + hs_diploma + in_labor_force + no_hs + some_college + under_povline + white +Population + Suicide_Rate + Homicide_Rate + legis_control + gov_party, data = datarf1)
+plot(mytree)
+text(mytree)
+title("Initial Regression for Total number of Laws")
+```
+This tree seems to simplistic so we also conduct one without the variable Suicide_Rate
+
+```{r}
+mytree1 =mytree1 = tree(lawtotal ~ INCTOT + above_bach + african_american + bach_degree + hs_diploma + in_labor_force + no_hs + some_college + under_povline + white +Population + Homicide_Rate + legis_control + gov_party, data = datarf1)
+plot(mytree1)
+text(mytree1, cex = 0.5)
+title("Secondary Regression for Total number of Laws")
+```
+This tree seems be more specific and also takes into account the political variable of legis_control, which is something that is probably pretty important in reality
+
+Now we're going to try prune the tree to reduce the number of branches. We do this using Cross-Validation
+```{r}
+cvpst = cv.tree(mytree1, K=90)
+plot(cvpst)
+cvpst$size
+cvpst$dev
+```
+We can see that the deviance goes down rapidly  and is continually decreasing even as the number of folds K goes to infinity. So maybe if we increase our K in the initial cross validation this will change
+
+```{r}
+cvpst1 = cv.tree(mytree1, K=1000)
+plot(cvpst1)
+cvpst1$size
+cvpst1$dev
+```
+As you can see from the plot there seems to be a minimum around 9. This is confirmed when we look at the size and deviation from this cross validation. Therefore we can now prune the tree at size 9.
+
+```{r}
+pstcut <- prune.tree(mytree1, best = 9)
+plot(pstcut)
+text(pstcut, cex = 0.5)
+title("Pruned Regression for Total number of Laws")
+```
+We can see that there hasn't been that large of a change, but it is still quite predictive it seems. At the end of the day it seems like there are four important variables that affect total law from our dendrogram. Firstly, as expected state-level legislative control appears to be a huge factor in contributing to total law count as we can see a clear divide between larger and smaller numbers of total laws. The other threee variable that seem to affect total number of laws is population size, education levels and proportion of african americans within the state. Population size most likely has a link to large urban centers, which are most likely in favor of gun laws rather than against, which is larger populations seem to have more gun laws. It also seems that if there are larger proportion of highly educated individuals that more gun laws are prefred within a state. The proportion of african americans within the state also seem to affect number of gun laws quite significantly as it seems that the as this proportion increases number of gun laws increase somewhat as well.
+
+Since we're using multiple variables to deterrmine the total number of laws, we cannot create a plot of the individual effect of each variable on total number of laws. It also seems that the most important variable, legislative control, is categorical so it seems as though reducing the number of variables to create a classification plot may not create the most explanatory data visualization. 
+
+
+Now we move onto the random forest aspect, to look at important varaibles and their predictive powers
+```{r}
+rf <- randomForest(lawtotal ~ INCTOT + above_bach + african_american + bach_degree + hs_diploma + in_labor_force + no_hs + some_college + under_povline + white +Population + Suicide_Rate + Homicide_Rate + legis_control + gov_party, data = datarf1, importance = TRUE)
+#plots
+varImpPlot(rf, main = "Variable Importance in Random Forest", type = 1)
+```
+The graph measures increases in mean squared error. The variable that creates the largest change is in the most important since it results in the largest changes all else equal. So it seems that just like as we saw in our tree dendrogram above that legislative control plays a huge role in determining total number of laws. Simirlarly variables that were identifitied in the tree as being important also seem to be considered important by our random forest as well. In fact it seems like the order of importance of the variable in the random forest follow exactly the split variables of the pruned tree. 
+
+
+Ultimately as a result of our dendograms and our random forest, we can easily see that political control plays a huge role in the number of laws a state has regarding guns, however factors such as population, education levels and race play a role in this as well. The explanation for this is relatively straighforward. In American politics, the position of political parties regarding gun laws is very clear, therefore if a state has a long hisotry of being controlled by a certain party then they are much more likely to have that parties policies in place. So for example a repulbican controlled state will have less gun laws than a democratic controlled state. The second factor that seems to be important is population, which as explained above is most likely a proxy for large urban centers, which tend to have not only more democrat leaning constituents, but also more crime and gun laws can be a way to prevent that crime, so this can be a possible explanation for the significant effect of the population variable. Educational levels are porbably linked, or in more scientific terms colinear with political variables, so the more educated the population of a state is, the more likely they are to vote democrat and thus the state has a higher likelihood of having a large amount of gun laws. Interestingly in both the tree and the random forest, homocide rate takes a back seat to these variables, which leads to a tentative conclusion that the demographic make-up of a state is much more important in determining the number of gun laws rather than the events that are actually happening within a state involving a gun. This could have profound consequences as this could mean that increasing gun laws or improving gun regulation cannot be achieved without significant changes in political leaning of individuals. These types of changes do not happen over-night or even within a medium-term timeframes like a couple years, and often take a few generations. In this sense, our anylsis with the tree and the random forests create a very bleak picture for the future of gun regulation improvemet. 
+
